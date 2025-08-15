@@ -1,9 +1,6 @@
 #!/bin/bash
-set -e
-
 mkdir -p build
 cd build
-cmake -S .. -B .
-make -j$(nproc)
-./DOOM
+cmake -S ../ -B .
+make && ./DOOM
 cd ..
