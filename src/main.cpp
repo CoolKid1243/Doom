@@ -1,4 +1,4 @@
-#include "typedefs.h"
+#include "typedefs.hpp"
 
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -7,15 +7,27 @@
 
 #undef main
 
-#define screenW 1152
-#define screenH 758
+#define screenW 576
+#define screenH 379
 
+#define MOV_SPEED 100
+#define ROT_SPEED 3
+#define WWAVE_MAG 15
+
+// Global variables
 SDL_Renderer* renderer;
 
 Camera cam;
 Polygon polys[MAX_POLYS];
 
+int screenSpaceVisiblePlanes;
+ScreenSpacePoly screenSpacePolys[MAX_POLYS][MAX_VERTS];
+
 void Init();
+void CameraTranslate(double deltaTime);
+Color GetColorByDistance(float dist);
+void Rasterize();
+void ClearRasterBuffer();
 void Render();
 void UpdateScreen();
 int ShouldQuit(SDL_Event event);
@@ -26,27 +38,34 @@ int main() {
         "knock-off doom",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        screenW, screenH,
+        1152, 758,
         SDL_WINDOW_SHOWN
     );
  
     renderer = SDL_CreateRenderer(mainWin, 0, SDL_RENDERER_SOFTWARE);
+    SDL_RenderSetLogicalSize(renderer, screenW, screenH);
 
     Init();
 
     int loop = 1;
     SDL_Event event;
-    while (loop) {
-        SDL_PollEvent(&event);
+    double deltaTime = 0.016;
 
-        // Clear window color to black
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    while (loop) {
+        double start = SDL_GetTicks();
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0); // window clear color
         SDL_RenderClear(renderer);
 
+        SDL_PollEvent(&event);
+
+        CameraTranslate(deltaTime);
         Render();
         UpdateScreen();
 
-        if (ShouldQuit(event)) break;
+        double end = SDL_GetTicks();
+        deltaTime = (end - start) / 1000.0;
+
+        while (SDL_PollEvent(&event)) if (ShouldQuit(event)) loop = 0;
     }
  
     SDL_DestroyRenderer(renderer);
@@ -252,7 +271,183 @@ int IsFrontFace(Vec2 Camera, Vec2 pointA, Vec2 pointB) {
     return ZERO;
 }
 
+void CameraTranslate(double deltaTime) {
+    const Uint8* keyState = SDL_GetKeyboardState(NULL);
+ 
+    if (keyState[SDL_SCANCODE_W]) {
+        cam.camPos.x += MOV_SPEED * cos(cam.camAngle) * deltaTime;
+        cam.camPos.y += MOV_SPEED * sin(cam.camAngle) * deltaTime;
+        cam.stepWave += 3 * deltaTime;
+    } else if (keyState[SDL_SCANCODE_S]) {
+        cam.camPos.x -= MOV_SPEED * cos(cam.camAngle) * deltaTime;
+        cam.camPos.y -= MOV_SPEED * sin(cam.camAngle) * deltaTime;
+        cam.stepWave += 3 * deltaTime;
+    }
+
+    if (cam.stepWave > M_PI*2) cam.stepWave = 0;
+ 
+    if (keyState[SDL_SCANCODE_A]) {
+        cam.camAngle -= ROT_SPEED * deltaTime;
+    } else if (keyState[SDL_SCANCODE_D]) {
+        cam.camAngle += ROT_SPEED * deltaTime;
+    }
+}
+
+// nvert = vertices count
+// vertx = all x vertices coordinates
+// verty = all y vertices coordinates
+// testx & testy = point to test if inside the polygon
+int PointInPoly(int nvert, float *vertx, float *verty, float testx, float testy) {
+    int i, j, isPointInside = 0;
+ 
+    for (i = 0, j = nvert - 1; i < nvert; j = i++) {
+        int isSameCoordinates = 0;
+ 
+        if ((verty[i]>testy) == (verty[j]>testy)) isSameCoordinates = 1;
+ 
+        if (isSameCoordinates == 0 && (testx < (vertx[j]-vertx[i]) * (testy - verty[i]) / (verty[j]-verty[i]) + vertx[i])) {
+            isPointInside = !isPointInside;
+        }
+    }
+    
+    return isPointInside;
+}
+
+Color GetColorByDistance(float dist) {
+    float pixelShader = (0x55 / dist);
+    if (pixelShader > 1) pixelShader = 1.0;
+    else if (pixelShader < 0) pixelShader = 0.1;
+ 
+    Color clr;
+    clr.R = 0x00;
+    clr.G = 0xFF * pixelShader;
+    clr.B = 0x00;
+ 
+    return clr;
+}
+
+void RenderSky() {
+    int maxy = static_cast<float>(screenH) / 2 + (WWAVE_MAG * sinf(cam.stepWave));
+    SDL_Rect rect;
+    rect.x = 0;
+    rect.y = 0;
+    rect.w = screenW;
+    rect.h = maxy;
+ 
+    Color clr;
+    clr.R = 77;
+    clr.G = 181;
+    clr.B = 255;
+    SDL_SetRenderDrawColor(renderer, clr.R, clr.G, clr.B, 255);
+    SDL_RenderFillRect(renderer, &rect);
+}
+
+void RenderGround() {
+    float waveVal = WWAVE_MAG * sin(cam.stepWave);
+    int starty = static_cast<float>(screenH) / 2 + waveVal;
+   
+    for (int y = starty; y < screenH; y++) {
+        Color clr;
+        clr.R = y / 2;
+        clr.G = y / 2;
+        clr.B = y / 2;
+        SDL_SetRenderDrawColor(renderer, clr.R, clr.G, clr.B, 255);
+        SDL_RenderDrawLine(renderer, 0, y, screenW, y);
+    }
+}
+
+void ClearRasterBuffer() {
+    for (int polyIdx = 0; polyIdx < MAX_POLYS; polyIdx++) {
+        for (int i = 0; i < polys[polyIdx].vertCnt; i++) {          
+            for (int vn = 0; vn < RASTER_NUM_VERTS; vn++) {
+                screenSpacePolys[polyIdx][i].vert[vn].x = 0;
+                screenSpacePolys[polyIdx][i].vert[vn].y = 0;
+            }
+        }
+    }
+}
+
+void Rasterize() {
+    RenderSky();
+    RenderGround();
+
+    float vx[4];
+    float vy[4];
+ 
+    Uint8 pixelBuff[screenH][screenW];
+    memset(pixelBuff, 0, sizeof(pixelBuff));
+ 
+    for (int polyIdx = screenSpaceVisiblePlanes - 1; polyIdx >= 0; polyIdx--) {
+        for (int nextv = 0; nextv < RASTER_NUM_VERTS; nextv++) {
+            int planeId = screenSpacePolys[polyIdx]->planeIdInPoly;
+ 
+            vx[nextv] = screenSpacePolys[polyIdx][planeId].vert[nextv].x;
+            vy[nextv] = screenSpacePolys[polyIdx][planeId].vert[nextv].y;
+        }
+
+        Color c = GetColorByDistance(screenSpacePolys[polyIdx]->distFromCamera);
+        SDL_SetRenderDrawColor(renderer, c.R, c.G, c.B, 255);
+ 
+        for (int y = 0; y < screenH; y += RASTER_RESOLUTION) {
+            for (int x = 0; x < screenW; x += 1) {
+                if (pixelBuff[y][x] == 1) continue;
+ 
+                if (PointInPoly(RASTER_NUM_VERTS, vx, vy, x, y) == 1) {
+                    // for (int learp = 0; learp < RASTER_RESOLUTION; learp++) PutPixel(x, y + learp, 100, 255, 0);
+ 
+                    PutPixel(x, y, c.R, c.G, c.B);
+                    pixelBuff[y][x] = 1;
+                }
+            }
+        }
+    }
+}
+
+float Len(Vec2 pointA, Vec2 pointB) {
+    float distY = pointB.y - pointA.y;
+    float distX = pointB.x - pointA.x;
+    return sqrt(distX * distX + distY * distY);
+}
+
+float ClosestVertexInPoly(Polygon poly, Vec2 pos) {
+    float dist = 9999999;
+    for (int i = 0; i < poly.vertCnt; i++) {
+        float d = Len(pos, poly.vert[i]);
+        if (d < dist) dist = d;
+    }
+ 
+    return dist;
+}
+
+void SortPolysByDepth() {
+    for(int i=0; i < MAX_POLYS; i++) {
+        for(int j=0; j < MAX_POLYS - i - 1; j++) {
+            Polygon poly1 = polys[j];
+            Polygon poly2 = polys[j+1];
+ 
+            float distP1 = ClosestVertexInPoly(poly1, cam.camPos);
+            float distP2 = ClosestVertexInPoly(poly2, cam.camPos);
+ 
+            polys[j].curDist = distP1;
+            polys[j+1].curDist = distP2;
+ 
+            if(distP1 < distP2) {
+                Polygon temp = polys[j+1];
+                polys[j+1] = polys[j];
+                polys[j] = temp;
+            }
+        }
+    }
+}
+
 void Render() {
+    SortPolysByDepth();
+
+    if (SHOULD_RASTERIZE == 1) {
+        ClearRasterBuffer();
+        screenSpaceVisiblePlanes = 0;
+    }
+
     for (int polyIdx = 0; polyIdx < MAX_POLYS; polyIdx++) {    
         for (int i = 0; i < polys[polyIdx].vertCnt - 1; i++) {
             Vec2 p1 = polys[polyIdx].vert[i];
@@ -290,7 +485,7 @@ void Render() {
             }
 
             float widthRatio = screenW / 2.0f;
-            float heightRatio = (screenW * screenH) / 60.0f;
+            float heightRatio = (static_cast<float>(screenW) * static_cast<float>(screenH)) / 60.0f;
             float centerScreenH = screenH / 2.0f;
             float centerScreenW = screenW / 2.0f;
 
@@ -301,13 +496,39 @@ void Render() {
             float y2a = (height - heightRatio) / z2;
             float y2b = heightRatio / z2;
 
-            DrawLine(centerScreenW + x1, centerScreenH + y1a, centerScreenW + x2, centerScreenH + y2a);
-            DrawLine(centerScreenW + x1, centerScreenH + y1b, centerScreenW + x2, centerScreenH + y2b);
-            DrawLine(centerScreenW + x1, centerScreenH + y1a, centerScreenW + x1, centerScreenH + y1b);
-            DrawLine(centerScreenW + x2, centerScreenH + y2a, centerScreenW + x2, centerScreenH + y2b);
+            // Draws wireframe
+            // DrawLine(centerScreenW + x1, centerScreenH + y1a, centerScreenW + x2, centerScreenH + y2a);
+            // DrawLine(centerScreenW + x1, centerScreenH + y1b, centerScreenW + x2, centerScreenH + y2b);
+            // DrawLine(centerScreenW + x1, centerScreenH + y1a, centerScreenW + x1, centerScreenH + y1b);
+            // DrawLine(centerScreenW + x2, centerScreenH + y2a, centerScreenW + x2, centerScreenH + y2b);
+
+            //wave player if walking
+            float wave = WWAVE_MAG * sinf(cam.stepWave);
+            y1a += wave, y1b += wave, y2a += wave, y2b += wave;
+
+            // Fill the rasterization buffer
+            if (SHOULD_RASTERIZE == 1) {
+                int planeIdx = screenSpaceVisiblePlanes;
+            
+                screenSpacePolys[planeIdx][i].vert[0].x = centerScreenW + x2;
+                screenSpacePolys[planeIdx][i].vert[0].y = centerScreenH + y2a;
+                screenSpacePolys[planeIdx][i].vert[1].x = centerScreenW + x1;
+                screenSpacePolys[planeIdx][i].vert[1].y = centerScreenH + y1a;
+                screenSpacePolys[planeIdx][i].vert[2].x = centerScreenW + x1;
+                screenSpacePolys[planeIdx][i].vert[2].y = centerScreenH + y1b;
+                screenSpacePolys[planeIdx][i].vert[3].x = centerScreenW + x2;
+                screenSpacePolys[planeIdx][i].vert[3].y = centerScreenH + y2b;
+            
+                screenSpacePolys[planeIdx]->planeIdInPoly = i;
+                screenSpacePolys[planeIdx]->distFromCamera = (z1 + z2) / 2;
+                screenSpaceVisiblePlanes++;
+            }
         }
     }
+
+    if (SHOULD_RASTERIZE == 1) Rasterize();  
 }
+
 
 void UpdateScreen() {
     SDL_RenderPresent(renderer);

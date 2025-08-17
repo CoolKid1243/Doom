@@ -1,5 +1,11 @@
+#include <SDL2/SDL_stdinc.h>
+
 #define MAX_POLYS 10
 #define MAX_VERTS 8
+
+#define SHOULD_RASTERIZE 1 // 1 is on and 0 if off
+#define RASTER_RESOLUTION 1 // decrease for better resolution, increase for performance
+#define RASTER_NUM_VERTS 4
 
 typedef struct Vec2 {
     float x, y;
@@ -28,3 +34,7 @@ typedef struct{
     Vec2 camPos;
     Vec2 oldCamPos;
 } Camera;
+
+typedef struct {
+    Uint8 R, G, B;
+} Color;
