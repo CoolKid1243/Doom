@@ -467,22 +467,26 @@ void Render() {
             distX1 = distX1 * sin(cam.camAngle) - distY1 * cos(cam.camAngle);
             distX2 = distX2 * sin(cam.camAngle) - distY2 * cos(cam.camAngle);
 
-            if (z1 > 0 || z2 > 0) {
-                Vec2 i1 = Intersection(distX1, z1, distX2, z2, -0.0001, 0.0001, -20, 5);
-                Vec2 i2 = Intersection(distX1, z1, distX2, z2, 0.0001, 0.0001, 20, 5);
+            const float NEAR_CLIP = 0.1f;
 
-                if (z1 <= 0) {
-                    if (i1.y > 0) { distX1 = i1.x; z1 = i1.y; }
-                    else { distX1 = i2.x; z1 = i2.y; }
-                }
+            // Reject if the whole segment is behind the near plane
+            if (z1 <= NEAR_CLIP && z2 <= NEAR_CLIP) continue;
 
-                if (z2 <= 0) {
-                    if (i1.y > 0) { distX2 = i1.x; z2 = i1.y; }
-                    else { distX2 = i2.x; z2 = i2.y; }
-                }
-            } else {
-                continue;
+            // If one endpoint is behind, clip it to z = NEAR_CLIP
+            if (z1 < NEAR_CLIP) {
+                float t = (NEAR_CLIP - z1) / (z2 - z1);
+                distX1 = distX1 + t * (distX2 - distX1);
+                z1 = NEAR_CLIP;
             }
+            if (z2 < NEAR_CLIP) {
+                float t = (NEAR_CLIP - z2) / (z1 - z2);
+                distX2 = distX2 + t * (distX1 - distX2);
+                z2 = NEAR_CLIP;
+            }
+
+            // Safety clamp
+            z1 = (z1 < NEAR_CLIP) ? NEAR_CLIP : z1;
+            z2 = (z2 < NEAR_CLIP) ? NEAR_CLIP : z2;
 
             float widthRatio = screenW / 2.0f;
             float heightRatio = (static_cast<float>(screenW) * static_cast<float>(screenH)) / 60.0f;
